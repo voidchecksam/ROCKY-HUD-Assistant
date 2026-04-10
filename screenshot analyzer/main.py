@@ -14,23 +14,51 @@ def get_answer_from_groq(image):
     image.save(buffered, format="JPEG")
     base64_image = base64.b64encode(buffered.getvalue()).decode('utf-8')
     
-    # added the retry loop back in just in case groq hangs too
     for attempt in range(3):
         try:
-            # groq literally just decommissioned 3.2 vision right as i tested it. wtf. upgrading to llama 4
             completion = client.chat.completions.create(
                 model="meta-llama/llama-4-scout-17b-16e-instruct", 
                 messages=[{"role": "user", "content": [{"type": "text", "text": "solve this and return ONLY valid json"}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}]}]
             )
-            return completion.choices[0].message.content
+            
+            # remove weird markdown block formatting
+            clean_text = completion.choices[0].message.content.strip().replace('```json', '').replace('```', '')
+            return json.loads(clean_text)
+            
         except Exception as e:
             if "429" in str(e) or "503" in str(e):
                 time.sleep(2)
                 continue
-            return str(e)
+            return {"error": str(e)}
+
+def notify(message: str, title: str = "Test Assistant"):
+    try:
+        notification.notify(title=title, message=message, app_name="Test Assistant", timeout=7)
+    except Exception as e:
+        pass
+
+def on_press(key):
+    if key == pynput.keyboard.Key.f8:
+        print("\ncapturing screen... ")
+        notify("processing...")
+        try:
+            image = ImageGrab.grab()
+            
+            # BIG FIX: resizing image to save tokens
+            image.thumbnail((1280, 1280)) 
+            
+            result = get_answer_from_groq(image)
+            print(result)
+            notify(f"Answer: {result.get('answer', 'Error')}")
+            
+        except Exception as e:
+            print(f"error: {e}")
+            notify("error occurred. check console.")
 
 def main():
-    print("running llama 4 scout...")
+    print("listening for F8 hotkey...")
+    with pynput.keyboard.Listener(on_press=on_press) as listener:
+        listener.join()
 
 if __name__ == "__main__":
     main()
